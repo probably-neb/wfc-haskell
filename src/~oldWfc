@@ -1,0 +1,237 @@
+module OldWfc where
+
+import Data.Maybe
+import Debug.Trace
+import GHC.Stack
+
+import Control.Monad.State
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Stack (Stack(..))
+import qualified Stack
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as I
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
+
+import Graphics.Gloss
+    ( black,
+      red,
+      blank,
+      color,
+      rectangleSolid,
+      rectangleWire,
+      Picture )
+import Graphics.Gloss.Data.ViewPort
+
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+
+import Entropy
+import Utils
+import Point
+import Patterns
+
+import System.Random
+import Data.Word
+
+-- NOTE: Patterns are possible NxN images found from inputImages
+--       Tiles are locations in the output image than have a domain of possible patterns they can eventually be
+
+-----------------------------------------------------------------------------------------
+data Model = Model {
+  m'outDims :: WdHt,
+-- how we know which tile is where
+  m'board :: Map Point Tile,
+  m'patternIdMap :: IntMap Pattern, -- maps vector index to hash for use in patterns
+  m'probVec :: IdVec,
+  m'adjVec :: Vector (Vector IdVec),
+-- stores the entropies for all points for easier retrieval of the min (non zero)
+-- would be usefull if values could be updated
+  -- m'entropyHeap :: Heap (Entry Double Point),
+  m'n :: Int,
+  m'done :: Bool
+}
+
+instance Show Model where
+  show m = concat ["Model{Board: ", show (M.elems $ m'board m),"}"]
+
+defaultTile :: Point -> IdVec -> Float -> Double -> Tile
+defaultTile pnt dvec n ent = emptyTile{t'pic = defaultWirePic n, t'loc=pnt,t'domain=dvec, t'entropy=ent}
+
+setDefaultBoard :: Model -> Model
+setDefaultBoard m = m {m'board = M.fromList [(pnt, defaultTile pnt defaultDomainVec (fromIntegral n) defaultEntropy) | pnt <- getCoords (m'outDims m)]}
+  where
+    defaultDomainVec = V.replicate (V.length (m'probVec m)) 1.0
+    defaultEntropy = entropyOfDomain defaultDomainVec (m'probVec m)
+    n = m'n m
+
+-- default model constructor
+emptyModel :: Model
+emptyModel =  Model {m'board = M.empty, m'patternIdMap=I.empty, m'outDims=(0,0), m'n=0, m'done = False, m'probVec=V.empty, m'adjVec=V.empty}
+
+setupModel :: WdHt -> [Pattern] -> Int -> Model -- patterns are assumed to be unique
+setupModel wdHt ps n = setDefaultBoard $ emptyModel {m'patternIdMap= patternIdMap,m'outDims=wdHt, m'n = n,m'probVec=probVec, m'adjVec=adjVec}
+  where patternIdMap = intMapPattern ps p'id id -- {p'id : p}
+        orderedPatterns = (I.elems patternIdMap) -- use elems for ordered list
+        probVec = (V.fromList (map p'prob orderedPatterns))
+        adjVec = (V.fromList (map (adjMapToVector . p'adjacents) orderedPatterns) :: Vector (Vector (Vector Double)))
+
+insertTile :: Tile -> Model -> Model
+insertTile t m@(Model{m'board=oldBoard}) = m{m'board = M.insert (t'loc t) t oldBoard}
+
+insertTiles :: [Tile] -> Model -> Model
+insertTiles ts m = foldr insertTile m ts
+
+adjMapToVector :: Map Point IdVec -> Vector (Vector Double)
+adjMapToVector adjMp = dirVec V.// dirElems
+  where
+        elems = (M.assocs adjMp)
+        dirElems = map (\(dir,v) -> (dirToIdx dir,v)) elems
+        dirVec = V.replicate 4 V.empty
+
+------------------------------------------------------------------------------------------
+
+data Tile = Tile {
+-- Map of hashed patterns too frequencies.
+t'domain :: IdVec, -- only 1s and 0s
+-- Map of each cardinal dir [(0,1),(0,-1)...] to the allowed neighbors
+-- The point of the tile
+t'loc :: Point,
+t'collapsed :: Bool, -- could check domain or pic for what will change for them but this is nicer on the brain
+-- the picture for this tile initialized as default wireframe square, then set to correct image once collapsed
+t'pic :: Picture,
+t'entropy :: Double
+}
+
+instance Show Tile where
+  show t = concat [if t'collapsed t then "\ESC[92m" ++ tstr else if fromIntegral (round (t'entropy t)) /= t'entropy t || t'entropy t == 0.0 then "\ESC[93m" ++ tstr else "",", H(",show (t'entropy t),")",show (t'domain t), "\ESC[0m"]
+    where tstr = concat ["Tile: ",  show $ t'loc t]
+
+emptyTile :: Tile
+emptyTile = Tile {t'domain = V.empty, t'entropy = 0.0, t'loc = (0,0), t'pic = blank, t'collapsed = False}
+
+tileSetPic :: Picture -> Tile -> Tile
+tileSetPic p t = t {t'pic = p}
+
+tileSetLoc :: Point -> Tile -> Tile
+tileSetLoc p t = t {t'loc = p}
+
+defaultWirePic :: Float -> Picture
+defaultWirePic n = color black $ rectangleWire n n
+
+defaultPixelPic :: Picture
+defaultPixelPic = color black $ rectangleSolid 100.0 100.0
+
+-------------------------------------------------------------------------------------------
+
+entropyOfDomain :: IdVec -> IdVec -> Double
+entropyOfDomain dom probs = Entropy.entropy probVec
+  where probVec = V.zipWith (*) dom probs
+
+takeLowerIfnZero :: Tile -> Tile -> Tile
+takeLowerIfnZero t1 t2 | e1 <= 0 = t2
+                                | e2 <= 0 = t1
+                                | e1 < e2 = t1
+                                | otherwise = t2
+              where e1 = t'entropy t1
+                    e2 = t'entropy t2
+
+findMinEntropy :: Model -> Tile
+findMinEntropy m = foldl1 takeLowerIfnZero (M.elems (m'board m))
+
+-- getAdacentsInDirection :: Point -> Pattern -> IdVec
+-- getAdacentsInDirection dir pat@(Pattern{p'adjacents = adjsMp}) = adjsMp M.! dir
+
+getDomainInDirection :: HasCallStack => Vector (Vector IdVec) -> IdVec -> Point -> IdVec
+getDomainInDirection dirMpV tdom dir = dom
+  where
+    dirIdx = dirToIdx dir
+    subDomains = V.catMaybes $ andIdVecWNIdVec tdom dirMpV -- unordered vec of relevant patterns directional domains
+    dirDomains = V.map (\d -> d V.! dirIdx) subDomains -- map each vec of directional domains to the correct direction 
+    dom = V.foldr1 andIdVecs (dirDomains) -- and all domains together
+
+randomPatternHeuristic :: IdVec -> Int
+randomPatternHeuristic dom = case validIndeces V.!? index of 
+                               Just i -> i
+                               Nothing -> error "not valid index in randomPatternHeuristic"
+  where
+    validIndeces = V.elemIndices 1.0 dom
+    range = (0,V.length validIndeces) -- -1?
+    gen = mkStdGen 2022
+    (index,_) = randomR range gen
+
+mostProbablePatternHeuristic :: IdVec -> IdVec -> Int
+mostProbablePatternHeuristic dom probs = V.maxIndex ((andIdVecs dom probs))
+
+collapseTile :: HasCallStack => Model -> Tile -> Tile
+collapseTile m t@(Tile{t'domain=dom}) = t {t'domain = newDom,
+                                         t'collapsed = True,
+                                         t'pic = p'pic pat,
+                                         t'entropy = 0.0}
+                               where index = mostProbablePatternHeuristic dom (m'probVec m)
+                                     pat = m'patternIdMap m I.! index
+                                     newDom = V.imap (\i _ -> if i==index then 1.0 else 0.0) dom
+          -- pic = p'pic maxProbPattern
+          -- (x,y) = (t'loc t)
+          -- gen = mkStdGen 2022
+          -- [r,g,b] = take 3 $ randomRs (0,255) gen
+          -- testpic = color (makeColorI r g b 255) $ rectangleSolid 1.0 1.0
+
+updateDomain :: HasCallStack => Model -> Tile -> Tile -> Maybe Tile
+updateDomain m t0@(Tile {t'loc = t0loc}) tn@(Tile {t'domain = tndom, t'loc=tnloc}) = newTile
+  where dir = getDirection tnloc t0loc
+        adjVec = m'adjVec m
+        t0dirdom = (getDomainInDirection adjVec (t'domain t0) dir)
+        newTile = if t0dirdom /= tndom
+                   then let
+                          newDom = trace "Found different domains, adding to stack " (andIdVecs tndom t0dirdom)
+                          newEnt = entropyOfDomain newDom (m'probVec m)
+                          entPic = color red $ rectangleSolid 3.0 3.0
+                         in Just tn{t'domain=newDom, t'entropy=newEnt, t'pic = entPic}
+                    else
+                      Nothing
+
+getChangedDomains :: Model -> Tile -> [Tile] -> [Tile]
+getChangedDomains m t ts = (mapMaybe (updateDomain m t) (filter (not . t'collapsed) ts))
+
+-- add changed neighbors to stack
+-- if stack empty       -> return updated Model
+-- elif stack not empty -> pop from stack and return recursive call
+disseminate :: HasCallStack => Stack Tile -> Model -> Model
+disseminate (Stack []) m = m
+disseminate stack m = disseminate newStack newModel
+  where (t,pStack) = Stack.pop stack
+        dims = m'outDims m
+        adjs = filter (t'collapsed) (map (\point -> m'board m M.! point) (adjacents 1 dims (t'loc t)))
+        adjsAdjDom = mapMaybe (updateDomain m t) adjs
+        newStack = Stack.pushl adjsAdjDom pStack
+        newModel = trace "adding modified tile to model" insertTile t m
+
+observeNext :: HasCallStack => Model -> Model
+observeNext m@(Model{m'done = done})
+                                            | done = newModel
+                                            | otherwise = disseminate (Stack.singleton t) newModel
+  where minEntropyTile = findMinEntropy m
+        t = (collapseTile m minEntropyTile)
+        newModel = insertTile t m
+        done = False
+
+  -- where modelState = do mS <- state m
+  --                       return mS
+
+-- the function to initialize each step
+step :: ViewPort -> Float -> Model -> Model
+step _ _ m = observeNext m -- extracted out for non visual runs
+
+-- the function that will call observeNext completion if no rendering is needed
+runWfc :: Model -> Model
+runWfc m@(Model {m'done=done}) | done = m
+                               | otherwise = observeNext m
+
+testModel :: Model
+testModel = initModel
+  where
+    img = genFakeImage 20
+    plst =  (getPatternsFromImage img 3)
+    initModel = (setupModel (50,50) plst 3)

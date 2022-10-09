@@ -1,0 +1,69 @@
+name:                wfc
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/githubuser/wfc#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Author name here
+maintainer:          example@example.com
+copyright:           2022 Author name here
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+                     CHANGELOG.md
+
+executable wfc
+  hs-source-dirs:      src
+  main-is:             Main.hs
+  default-language:    Haskell2010
+  build-depends:       base >= 4.7 && < 5,
+                       JuicyPixels == 3.3.7,
+                       directory,
+                       containers,
+                       vector,
+                       split,
+                       unordered-containers == 0.2.17.0,
+                       hashable,
+                       gloss,
+                       random,
+                       mtl,
+                       transformers,
+                       heaps,
+                       time
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-record-updates
+                       -Wincomplete-uni-patterns
+                       -Wmissing-export-lists
+                       -Wmissing-home-modules
+                       -Wpartial-fields
+                       -Wredundant-constraints
+  other-modules:       Entropy,
+                       Patterns,
+                       Render,
+                       Utils,
+                       Point,
+                       Stack,
+                       Wfc
+
+
+test-suite hspec
+  main-is: Spec.hs
+  type: exitcode-stdio-1.0
+  build-depends: base
+               , hspec
+               , QuickCheck
+               , vector
+               , JuicyPixels
+               , split
+               , gloss
+               , containers
+               , hashable
+               , transformers
+               , random
+  hs-source-dirs: test,src
+  other-modules: PatternsSpec
+  default-language: Haskell2010
