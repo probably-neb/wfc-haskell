@@ -67,14 +67,14 @@ outputScale = (sx,sy)
 
 main :: IO ()
 main = do
-  let (path,rn) = mazePath
+  let (path,rn) = celticPath
   img <- loadInput path
   let lplst = getPatternsFromImage img rn
   rands <- getRandoms outputTileDims
-  let rn = 4
+  -- let rn = 4
   let plst = getSimplePatterns
   let
-      initModel = setupModel rands outputTileDims plst rn
+      initModel = setupModel rands outputTileDims lplst rn
   playInteractiveWfc initModel
 
 playWfc :: Model -> IO ()

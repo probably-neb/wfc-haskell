@@ -1,6 +1,7 @@
 module Patterns where
-import Debug.Trace
+
 import GHC.Stack
+import Debug.Trace
 import Codec.Picture
 -- import Codec.Picture.Types
 -- import Data.Map.Lazy (Map)
@@ -15,7 +16,6 @@ import Data.Vector.Storable (Vector)
 import qualified Data.Vector.Storable as VS
 import Data.List (group,sort,nub)
 import Data.Maybe
-import Data.Map.Internal.Debug (showTree)
 import Data.Hashable
 import Data.Word
 import Data.Set (Set)

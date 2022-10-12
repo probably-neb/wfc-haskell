@@ -1,7 +1,10 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module Wfc where
 
 import GHC.Stack
+import GHC.Generics
 import Debug.Trace
 import Graphics.Gloss hiding (Vector,Point)
 import System.Random
@@ -51,7 +54,7 @@ data Model = Model {
   m'stack :: Stack Point,
   m'rands :: [Int],
   m'prev :: Model -- previous model (where tile was collapsed)
-}
+} deriving Generic
 
 data Tile = Tile {
   -- Map of hashed patterns too frequencies.
@@ -100,14 +103,6 @@ findMinEntropy ts = minEntropy'
                     $ filter (not . t'collapsed . snd)
                     $ tozip t'entropy id ts
 
-updateTile :: Tile -> State Model ()
-updateTile ts = do m@Model {m'board=board} <- get
-                   put m{m'board=insertTile board ts}
-
-updateTiles :: Foldable f => f Tile -> State Model ()
-updateTiles ts = do m@Model {m'board=board} <- get
-                    put m{m'board=foldl insertTile board ts}
-
 -- additionally updates tile pics
 updatePropogatedTiles :: [Tile] -> State Model ()
 updatePropogatedTiles ts =
@@ -117,15 +112,15 @@ updatePropogatedTiles ts =
                             -> t{t'pic=getTilePic pats n tdom}) ts
      updateTiles updPicTs
 
-domainInDirection :: IdVec -> Int -> Vector IdVec -> Dir -> IdVec
-domainInDirection tdom vlen adjVec dir =
-  V.foldr orIdVecs (falseIdVec vlen)
-  $ V.map (\idx -> adjVec V.! indexAdjVec vlen dir idx)
-  $ V.findIndices ivB tdom
+domainInDirection :: Vector Pattern -> Dir -> Int -> IdVec
+domainInDirection ps dr vlen = V.foldl orIdVecs tVec $ V.map ((M.! dr) . p'adjacents) ps
+  where tVec = falseIdVec vlen
 
-directionalDomains :: IdVec -> Int -> Vector IdVec -> [(Dir,IdVec)]
-directionalDomains tdom vlen adjVec =
-  tozip id (domainInDirection tdom vlen adjVec) cardinalDirs
+
+directionalDomains :: IdVec -> Vector Pattern -> [(Dir,IdVec)]
+directionalDomains tdom ps = [(dir, domainInDirection relevantPs dir vlen) | dir <- cardinalDirs]
+  where vlen = V.length tdom
+        relevantPs = extractTrue tdom ps
 
 -- domains of adjacent tiles
 surroundingDomains :: Point -> Map Point Tile -> [(Dir,Maybe Tile)]
@@ -152,47 +147,14 @@ combineSurAndDirDomains probs surdoms dirdoms =
         -> Nothing)
   (map snd $ sort surdoms) (map snd $ sort dirdoms)
 
-stackPush :: (a -> Stack Point -> Stack Point) -> a -> State Model a
-stackPush pushf ps = do m@Model{m'stack=stack} <- get
-                        put m{m'stack=pushf ps stack}
-                        return ps
-
-stackPop :: State Model Point
-stackPop = do m@Model{m'stack=stack} <- get
-              let (p,remstack) = pop stack
-              put m{m'stack=remstack}
-              return p
-
-unintentionallyCollapsed ts = foldl (\bl tl -> (t'entropy tl == 0.0) || bl) False ts
-
--- pattern match the maybe away because rands is infinite
-assUncons :: [Int] -> Tile -> ([Int],Tile)
-assUncons rs t = let (Just (hed,tal)) = uncons rs in
-                     (tal,t{t'rand=hed})
-
-updateRands :: Map Point Tile -> [Int] -> ([Int],Map Point Tile)
-updateRands board rands = M.mapAccum assUncons rands board
-
-restoreModel :: [Int] -> Model -> Model
-restoreModel newrands m@Model{m'rands=rnds,m'prev=prev@Model{m'board=board}} =
-  let (newrnds, newboard) = updateRands board newrands in
-    prev{m'board=newboard,m'rands=newrnds}
-
-restoreM :: State Model ()
-restoreM = do
-  oldrands <- ((drop 10) . m'rands) <$> get
-  let newrands = (drop 10 oldrands) :: [Int]
-  modify $ restoreModel newrands
-  return ()
-
 propogate :: State Model (Stack Point)
-propogate = do m@Model{m'board=board,m'probVec=probs} <- get
+propogate = do m@Model{m'board=board,m'probVec=probs, m'patterns=ps} <- get
                tloc <- stackPop
                let t@Tile{t'domain=tdom} = board M.! tloc
                    updatedAdjs =
                      combineSurAndDirDomains probs
                        (surroundingDomains tloc board)
-                       (directionalDomains tdom (m'len m) (m'adjVec m)) ::[Tile]
+                       (directionalDomains tdom ps) :: [Tile]
                    updatedAdjLocs = map t'loc updatedAdjs
                if unintentionallyCollapsed updatedAdjs
                   then do
@@ -214,8 +176,8 @@ recursivePropogate = do stack <- m'stack <$> get
                            then
                              return True
                            else
-                           do propogate
-                              recursivePropogate
+                             do propogate
+                                recursivePropogate
 
 collapseTileM :: Tile -> Vector Pattern -> (IdVec -> Int) -> Tile
 collapseTileM t@(Tile{t'domain=dom}) patterns heuristic =
@@ -265,27 +227,29 @@ incStepCounter = do m@Model{m'step=prev} <- get
 observeNextM :: State Model Bool
 observeNextM = do stack <- m'stack <$> get
                   done <- m'done <$> get
-                  if Stack.null stack && not done
-                     then do
-                       maybtloc <- collapseMinEntropyTile
-                       case maybtloc of
-                         Just tloc -> do incStepCounter
-                                         return False
+                  if Stack.null stack
+                    then do
+                      maybtloc <- collapseMinEntropyTile
+                      case maybtloc of
+                        Just tloc -> do incStepCounter
+                                        return False
 
-                         Nothing -> do return True
-                     else do
-                       propogate
-                       m'done <$> get
+                        Nothing -> do return True
+                    else do
+                      propogate
+                      m'done <$> get
 
 observeUntilCollapse :: State Model Bool
 observeUntilCollapse = do observeNextM
                           stack <- m'stack <$> get
-                          if not (Stack.null stack)
+                          if Stack.null stack
                              then do
-                               observeUntilCollapse -- recursive call
-                               m'done <$> get
+                               -- return done
+                               m'done <$> get 
                              else do
-                               m'done <$> get -- return done
+                               -- recursive call
+                               observeUntilCollapse 
+                               m'done <$> get
 
 -- takes two ignored inputs from Gloss (viewport and time since start)
 stepM :: a -> b -> Model -> Model
@@ -471,3 +435,44 @@ defaultWirePic n = color black $ rectangleWire n n
 
 defaultPixelPic :: Picture
 defaultPixelPic = color black $ rectangleSolid 100.0 100.0
+
+updateTile :: Tile -> State Model ()
+updateTile ts = do m@Model {m'board=board} <- get
+                   put m{m'board=insertTile board ts}
+
+updateTiles :: Foldable f => f Tile -> State Model ()
+updateTiles ts = do m@Model {m'board=board} <- get
+                    put m{m'board=foldl insertTile board ts}
+
+stackPush :: (a -> Stack Point -> Stack Point) -> a -> State Model a
+stackPush pushf ps = do m@Model{m'stack=stack} <- get
+                        put m{m'stack=pushf ps stack}
+                        return ps
+
+stackPop :: State Model Point
+stackPop = do m@Model{m'stack=stack} <- get
+              let (p,remstack) = pop stack
+              put m{m'stack=remstack}
+              return p
+
+unintentionallyCollapsed ts = foldl (\bl tl -> (t'entropy tl == 0.0) || bl) False ts
+
+-- pattern match the maybe away because rands is infinite
+assUncons :: [Int] -> Tile -> ([Int],Tile)
+assUncons rs t = let (Just (hed,tal)) = uncons rs in
+                     (tal,t{t'rand=hed})
+
+updateRands :: Map Point Tile -> [Int] -> ([Int],Map Point Tile)
+updateRands board rands = M.mapAccum assUncons rands board
+
+restoreModel :: [Int] -> Model -> Model
+restoreModel newrands m@Model{m'rands=rnds,m'prev=prev@Model{m'board=board}} =
+  let (newrnds, newboard) = updateRands board newrands in
+    prev{m'board=newboard,m'rands=newrnds}
+
+restoreM :: State Model ()
+restoreM = do
+  oldrands <- ((drop 10) . m'rands) <$> get
+  let newrands = (drop 10 oldrands) :: [Int]
+  modify $ restoreModel newrands
+  return ()

@@ -8,6 +8,9 @@ newtype Stack a = Stack [a]
 instance Show a => Show (Stack a) where
   show (Stack a) = "Stack" ++ show a
 
+instance Eq a => Eq (Stack a) where
+  (Stack s1) == (Stack s2) = s1 == s2
+
 empty :: Stack a
 empty = Stack []
 

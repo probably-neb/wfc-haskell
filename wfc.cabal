@@ -12,8 +12,8 @@ category:            Web
 build-type:          Simple
 cabal-version:       >=1.10
 extra-source-files:  README.md
-                     CHANGELOG.md
 
+library 
 executable wfc
   hs-source-dirs:      src
   main-is:             Main.hs
@@ -37,18 +37,17 @@ executable wfc
                        -Widentities
                        -Wincomplete-record-updates
                        -Wincomplete-uni-patterns
-                       -Wmissing-export-lists
                        -Wmissing-home-modules
                        -Wpartial-fields
                        -Wredundant-constraints
   other-modules:       Entropy,
                        Patterns,
+                       Patterns.Internal,
                        Render,
                        Utils,
                        Point,
                        Stack,
                        Wfc
-
 
 test-suite hspec
   main-is: Spec.hs
@@ -66,4 +65,14 @@ test-suite hspec
                , random
   hs-source-dirs: test,src
   other-modules: PatternsSpec
+                 , WfcSpec
+                 , TestUtils
+                 , Entropy
+                 , Patterns
+                 , Patterns.Internal
+                 , Render
+                 , Utils
+                 , Point
+                 , Stack
+                 , Wfc
   default-language: Haskell2010

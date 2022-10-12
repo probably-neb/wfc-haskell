@@ -9,10 +9,10 @@ test:
 	stack build wfc --test --force-dirty --fast
 
 build:
-	stack build wfc --profile
+	stack build wfc
 
 runP: build 
 	stack exec wfc +RTS -xc
 
 repl: 
-	stack ghci src/* --profile --pedantic
+	stack ghci src/*
