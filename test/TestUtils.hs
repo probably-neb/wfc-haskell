@@ -22,6 +22,12 @@ genFakePixelCheckerBoard n x y | helper x == helper y = PixelRGBA8 255 255 255 2
 genFakeImage :: Int -> Image PixelRGBA8
 genFakeImage n = generateImage (genFakePixelCheckerBoard n) 50 50
 
+genImage :: Gen (Image PixelRGBA8)
+genImage = do
+  (x,y) <- genWH
+  rs <- vectorOf (x*y*4) (choose (0,255)) :: Gen [Word8]
+  return (Image x y (VS.fromList rs))
+
 foldTrue :: Foldable f => f Bool -> Bool
 foldTrue = and
 
@@ -35,5 +41,15 @@ getMod wh = do rs <- getRs
 getM2 :: IO Model
 getM2 = getMod (4,4)
 
+genPoint :: Gen Point
+genPoint = do
+    w <- chooseInt (0,100)
+    h <- chooseInt (0,100)
+    return (w,h)
 
-
+-- point with min 1
+genWH :: Gen Point
+genWH = do
+    w <- chooseInt (1,10)
+    h <- chooseInt (1,10)
+    return (w,h)

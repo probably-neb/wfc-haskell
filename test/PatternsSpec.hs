@@ -10,6 +10,12 @@ import Data.List (group,sort,mapAccumL)
 import qualified Graphics.Gloss as GL
 
 import TestUtils
+import Test.QuickCheck.Property ((===), (==>), forAll)
+import Data.Tuple (swap)
+import Utils (tozip, mapTuple)
+import Codec.Picture.Types (Image(..))
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck.Gen (chooseInt)
 
 n = 3
 img = genFakeImage n
@@ -19,6 +25,11 @@ probps = addProbabilitiesToPatterns ps
 
 spec :: Spec
 spec = describe "Patterns" $ do
+    prop "should not return nothing" $ do
+        forAll genImage $ \img ->
+          forAll (chooseInt (1,uncurry min $ dims img)) $ \n -> do
+              not $ null (initializePatternsFromImage img n)
+
     describe "initializePatternsFromImage" $ do
       it "should have p'vec" $ do
         let vps = map (not . VS.null . p'vec) ps :: [Bool]
@@ -120,3 +131,16 @@ spec = describe "Patterns" $ do
       it "no picture should be blank" $ do
         let blanks = filter (==GL.Blank) $ map p'pic picps
         length blanks `shouldBe` 0
+
+
+flipMap mp = M.fromList $ map swap $ M.assocs mp
+
+tonXn wh n = mapTuple submodn wh
+  where submodn a = a - (mod a n)
+
+allHashesUniqueToIds ps =
+  let idhshmp = M.fromList $ tozip p'id p'hash ps
+      hshidmp = M.fromList $ tozip p'hash p'id ps
+      flpidhshmp = flipMap idhshmp
+  in
+      flpidhshmp === hshidmp

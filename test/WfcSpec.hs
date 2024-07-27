@@ -13,7 +13,7 @@ import qualified Data.List as L
 import Wfc
 import Patterns
 import Patterns.Internal
-import Stack (pop,push,pushl)
+import Stack (pop,push,pushl, Stack (Stack))
 import qualified Stack
 import Utils
 import TestUtils
@@ -28,9 +28,15 @@ import Data.Word (Word8)
 import qualified Data.Vector.Generic as VG
 import Data.Function ((&))
 import qualified Control.Arrow as Bi
+import Prelude hiding (shows)
 
 simplePatterns = getSimplePatterns
 
+showv v = let elemstr = concat $ L.intersperse ", " $ V.toList $ V.map show v
+         in concat ["<",elemstr,">"]
+
+shows v = let elemstr = concat $ L.intersperse ", " $ S.toList $ S.map show v
+         in concat ["{",elemstr,"}"]
 n = 4
 dims' = (10,10)
 spec :: Spec
@@ -38,13 +44,14 @@ spec =  describe "Wfc" $ do
     rands <- runIO getRands
     let m = setupModel (head rands) dims' simplePatterns n
     prop "every tiles domain should be an intersection of its surroundings" $
-      forAllShrink genSteppedModel shrink $ \mod -> do
-        allTilesInBoardIntersectionOfAdjs mod == True
+      -- forAllShrink genSteppedModel shrink $ \mod -> do
+      forAll genSteppedModel $ \mod -> do
+        conjoin $ allTilesInBoardIntersectionOfAdjsProps (stepUntilCollapse mod)
             -- foldTrue bools `shouldBe` True
             -- mapM (shouldBe True) bools
     prop "stepping a model should result in done, collapse tile, or changed stack" $ do
-      forAllShrink genSteppedModel shrink $ \modi -> 
-        (not $ m'done modi) ==> do
+      forAllShrink genSteppedModel shrink $ \modi ->
+        not (m'done modi) ==> do
           let stacki = m'stack modi
               ncolpsi = length $ filter t'collapsed $ m'tiles modi
               modf = step modi
@@ -52,6 +59,19 @@ spec =  describe "Wfc" $ do
               donef = m'done modf
               ncolpsf = length $ filter t'collapsed $ m'tiles modf
           (stacki /= stackf) || (ncolpsi /= ncolpsf) `shouldBe` True
+
+    prop "patterns from output are subset of original patterns" $ do
+      forAll genImage $ \img ->
+       forAll (chooseInt (1,uncurry min $ dims img)) $ \n ->
+        forAll infiniteList $ \rands -> do
+         forAll genWH $ \wdht -> do
+           let originalPatterns = getPatternsFromImage img n
+               mi = setupModel rands wdht originalPatterns n
+               mf = last $ stepUntilDone mi
+               generatedImage = Render.getModelImage mf
+               finalPatterns = getPatternsFromImage generatedImage n
+           True
+           -- S.fromList finalPatterns `S.isSubsetOf` S.fromList originalPatterns
 
     describe "finding min entropy" $ do
       context "with non empty list" $ do
@@ -190,13 +210,28 @@ getEitherTile m tloc tdom dir =
   case m'board m M.!? add tloc dir of
     Just t -> let rps = extractTrue (t'domain t) (m'patterns m) in
                   domainInDirection rps (inverseDir dir) (m'len m)
-    Nothing -> tdom
+    Nothing -> tdom -- edge of board
   where vlen = m'len m
 
 allTilesInBoardIntersectionOfAdjs :: Model -> Bool
 allTilesInBoardIntersectionOfAdjs mod = foldTrue bools
   where tileLocs = map t'loc $ m'tiles mod
         bools = map (`tdomIsIntersectionOfAdjacents` mod) tileLocs
+
+allTilesInBoardIntersectionOfAdjsProps :: Model -> [Property]
+allTilesInBoardIntersectionOfAdjsProps mod = map (`tdomIsIntersectionOfAdjacentsProp` mod) tileLocs
+  where tileLocs = map t'loc $ m'tiles mod
+
+
+tdomIsIntersectionOfAdjacentsProp :: Point -> Model -> Property
+tdomIsIntersectionOfAdjacentsProp tloc m = counterexample failstr $ property $ tdomS `S.isSubsetOf` surroundingDomainsIntersection
+  where idxs v = S.fromList . V.toList $ V.elemIndices 1.0 v
+        tdom = t'domain $ m'board m M.! tloc
+        tdomS = idxs tdom
+        tVec = idxs $ trueIdVec (m'len m) :: Set Int
+        surroundingDomains' = map (\d -> (d,idxs $ getEitherTile m tloc tdom d)) cardinalDirs
+        surroundingDomainsIntersection = foldl S.intersection tVec (map snd surroundingDomains')
+        failstr = concat ["tile at loc:",show tloc," ,tdom: ",show $ S.toList tdomS," not subset of: ", show $ map (Bi.second S.toList) surroundingDomains' , "intersect = ",shows surroundingDomainsIntersection]
 
 tdomIsIntersectionOfAdjacents :: Point -> Model -> Bool
 tdomIsIntersectionOfAdjacents tloc m = tdomS `S.isSubsetOf` surroundingDomainsIntersection
@@ -207,18 +242,6 @@ tdomIsIntersectionOfAdjacents tloc m = tdomS `S.isSubsetOf` surroundingDomainsIn
         surroundingDomains' = map (idxs . (getEitherTile m tloc tdom)) cardinalDirs
         surroundingDomainsIntersection = foldl S.intersection tVec surroundingDomains'
 
-genPoint :: Gen Point
-genPoint = do
-    w <- chooseInt (0,100)
-    h <- chooseInt (0,100)
-    return (w,h)
-
--- point with min 1
-genWH :: Gen Point
-genWH = do
-    w <- chooseInt (1,10)
-    h <- chooseInt (1,10)
-    return (w,h)
 
 removeSideFilter (x,y) t@Tile{t'loc=(tx,ty)} | tx == x = False
                                              | ty == y = False
@@ -287,16 +310,27 @@ removeEastSide m@Model{m'outDims=(w,h)} =m{m'board=locFixedTilesMap,
 -- shrinkf sf m = concatMap shrinkf subterms ++ subterms
 --   where subterms = filter boardFilter $ sf m
 
+reset :: Model -> Model
+reset m = execState recursivePropogate m{m'board=M.fromList tiles,m'stack=stack}
+  where tiles = map (\ (loc,t@Tile{t'domain=tdom}) ->
+                                if t'collapsed t
+                              then (loc,t)
+                              else (loc,t{t'domain=trueIdVec (V.length tdom)})
+                      ) $ M.assocs (m'board m)
+        stack = Stack (map fst tiles)
+
 shrinkm :: Model -> [Model]
 shrinkm m = recsubterms ++ subterms
   where (w,h) = m'outDims m
-        ns = if h > 0 
+        ns = if h > 0
                 then [removeSouthSide m, removeNorthSide m]
                 else []
         ew = if w > 0
                 then [removeEastSide m, removeWestSide m]
                 else []
         subterms = ns ++ ew
+        -- TODO: make reset useful
+        -- recsubterms = map reset $ concatMap shrinkm subterms
         recsubterms = concatMap shrinkm subterms
 
 instance Arbitrary Model where

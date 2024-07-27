@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module Patterns where
 
 import GHC.Stack
@@ -79,17 +80,6 @@ defaultAdjMap :: Int -> AdjacentsMap
 defaultAdjMap len = (M.fromList $ zip P.cardinalDirs (repeat emptyv))
         where emptyv = falseIdVec len :: IdVec -- for type checker
 
--- addAdj :: Point -> Int -> AdjacentsMap -> AdjacentsMap
--- addAdj p id adjMp = if abs (fst p + snd p) == 1
---                         then  (M.adjust (V.// [(id,1.0)]) p adjMp) -- update id index to 1
---                       else error ("Non cardinal dir: " ++ (show p))
-
--- addAdjs :: [(Point,Int)] -> AdjacentsMap -> AdjacentsMap
--- -- addAdjs [] mp = mp
--- -- addAdjs ((pnt,pat):pps) mp = addAdjs pps (addAdj pnt pat mp)
--- addAdjs adjs mp = foldr (\(pn,id) mp' -> addAdj pn id mp') mp adjs
-
-
 ------------------------------------------------------------------------------------------
 data Pattern = Pattern {
   p'pic :: Picture,
@@ -127,6 +117,9 @@ instance Hashable Pattern where
   hash p = hashPatternVec $ p'vec p
   hashWithSalt salt p = hashWithSalt salt $ hash p
 
+instance Show (Image PixelRGBA8) where
+  show img = concat ["Image: (",show $ imageWidth img,",",show $ imageHeight img, ") Vec: ", show $ imageData img]
+
 --------------------------------------------------------------------------------------------------------
 
 -- make2d :: V.Storable a => V.Vector a -> V.Vector a
@@ -149,6 +142,7 @@ patternToPicture p = GL.Translate x y (vectorToPicture (p'vec p) (n,n))
         (x,y) = mapTuple fromIntegral (p'loc p) :: (Float, Float)
 
 patternsToPicture :: [Pattern] -> Picture
+
 patternsToPicture ps = GL.Pictures $ map patternToPicture ps
 
 dims :: Image PixelRGBA8 -> WdHt
@@ -267,7 +261,7 @@ addIdsToPatterns ps = iddPatterns
 -- addHashesToPatterns ps = [p{p'hash = hash p} | p <- ps]
 
 -- this is to be the only funtion that returns a list of patterns from something besides a list of patterns so it has to be first when the functions are composed
-initializePatternsFromImage :: HasCallStack => Image PixelRGBA8 -> Int -> [Pattern]
+initializePatternsFromImage :: Image PixelRGBA8 -> Int -> [Pattern]
 initializePatternsFromImage img n =
      [emptyPattern {
       p'pic=GL.blank,
@@ -284,7 +278,7 @@ initializePatternsFromImage img n =
   where
     dimens = dims img
     rowCol = P.getRwCls dimens n
-    coords = P.getCoords (P.subtract dimens (n,n)) -- coordinates for each point in rows,cols (overlapping)
+    coords = P.getCoords $ mapTuple (subModn n) dimens
     -- coords = P.getPatCoords rowCol n -- coordinates of top left corner of each pattern
 
 getPatternsFromImage :: HasCallStack => Image PixelRGBA8 -> Int -> [Pattern]
@@ -295,19 +289,5 @@ getPatternsFromImage img n = addPicturesToPatterns -- done last to avoid repeat 
                              . addProbabilitiesToPatterns
                              $ initializePatternsFromImage img n
 
-test :: IO [Pattern]
-test = do
-  img <- loadInput "inputs/checkerboard.png"
-  -- rc <- print $ (dims img)
-  return (getPatternsFromImage img 3)
-  -- print $ addNeighborsToPatterns $ addProbabilitiesToPatterns $ addHashesToPatterns $ (initializePatternsFromImage img 4)
-
--- data Pattern = Pattern {
---x  p'img :: Image PixelRGBA8,
---x  p'loc :: Point,
---x  p'rc :: RwCl,
---x  p'n :: Int,
---x  p'hash :: Hash, 
---   p'prob :: Double
---   p'neighbors :: NieghborMap
--- }
+maxLoc :: [Pattern] -> Point
+maxLoc ps = maximum $ map p'loc ps

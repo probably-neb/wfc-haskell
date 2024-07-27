@@ -6,6 +6,9 @@ type WdHt = (Int, Int)
 type Hash = Int
 
 
+subModn :: Integral a => a -> a -> a
+subModn n d = d - (mod d n)
+
 mapTuple :: ( a -> b ) -> (a,a) -> (b,b)
 mapTuple f (a1,a2) = ( f a1, f a2 )
 

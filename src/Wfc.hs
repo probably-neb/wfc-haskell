@@ -263,6 +263,9 @@ stepMaybe mi | m'done mf = Nothing
              | otherwise = Just mf
   where mf = step mi
 
+stepUntilCollapse :: Model -> Model
+stepUntilCollapse = execState observeUntilCollapse
+
 stepUntilDone :: Model -> [Model]
 stepUntilDone = unfoldr (fmap dup . stepMaybe)
 -----------------------------------------------------------------------------

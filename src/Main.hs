@@ -2,21 +2,13 @@
 {-# HLINT ignore "Redundant flip" #-}
 module Main where
 
--- import System.Directory
-import Entropy
 import Patterns
-import Patterns.Internal (getSimplePatterns)
 import Codec.Picture
-import Data.List
 import Utils ( WdHt, mapTuple )
 import Point
-import qualified Data.Set as Set
 import Wfc
 import qualified Render
--- import Codec.Picture.Types
 
--- TODO: REMOVE
-import Graphics.Gloss.Data.Bitmap
 import Graphics.Gloss.Data.Display (Display (..))
 import Graphics.Gloss (Picture)
 import qualified Graphics.Gloss as GL
@@ -35,16 +27,16 @@ outputVisDims = (1000,1000)
 outputBoarderWidth :: Int
 outputBoarderWidth = 25
 -- VARIABLES --
-hz = 10
+hz = 20
 
 circuitPath :: (FilePath, Int)
-circuitPath = ("inputs/circuit.png", 20)
+circuitPath = ("inputs/circuit.png", 32)
 checkerPath :: (FilePath, Int)
 checkerPath = ("inputs/checkerboard.png",3)
 mazePath :: (FilePath, Int)
-mazePath = ("inputs/Mazelike.png", 4)
+mazePath = ("inputs/Mazelike.png", 2)
 celticPath :: (FilePath, Int)
-celticPath = ("inputs/celtic.png",10)
+celticPath = ("inputs/celtic.png",32)
 
 outputWdHt :: WdHt
 outputWdHt = outputDims
@@ -69,13 +61,28 @@ main :: IO ()
 main = do
   let (path,rn) = celticPath
   img <- loadInput path
-  let lplst = getPatternsFromImage img rn
+  let plst = getPatternsFromImage img rn
   rands <- getRandoms outputTileDims
   -- let rn = 4
-  let plst = getSimplePatterns
-  let
-      initModel = setupModel rands outputTileDims lplst rn
-  playInteractiveWfc initModel
+  -- let plst = getSimplePatterns
+  let initModel = setupModel rands outputTileDims plst rn
+  playWfc initModel
+  -- runWfc initModel
+
+wfc :: Image PixelRGBA8 -> WdHt -> Int -> Int -> Image PixelRGBA8
+wfc img wdht n seed = output
+  where plst = getPatternsFromImage img n
+        gen = mkStdGen seed
+        rands = randoms gen
+        mi = setupModel rands wdht plst n
+        mf = last $ stepUntilDone mi
+        output = Render.getModelImage mf
+
+runWfc :: Model -> IO ()
+runWfc m = do Render.storeModelImage end filename
+  where end = last (stepUntilDone m)
+        rand = sum $ map t'rand $ m'tiles end
+        filename = "./outputs/wfc-" ++ show rand ++ ".png"
 
 playWfc :: Model -> IO ()
 playWfc initModel = 
@@ -99,7 +106,7 @@ playInteractiveWfc initModel =
 
 inputHandler :: Event -> Model -> Model
 inputHandler (EventKey (SpecialKey KeySpace) Down _ _) m= 
-  execState observeNextM m
+  step m
 inputHandler (EventKey (Char 'c') Down _ _) m = 
   execState observeUntilCollapse m
 -- inputHandleer (EventKey (MouseButton LeftButton) Down x y) = 
@@ -115,7 +122,6 @@ getRandoms (w,h) = do currTime <- getCurrentTime :: IO UTCTime
                       let gen = mkStdGen time 
                       let infRands = randoms gen :: [Int]
                       return infRands
-
 showPatterns :: IO ()
 showPatterns = do
   let (path,rn) = circuitPath
@@ -124,21 +130,3 @@ showPatterns = do
   let pic = patternsToPicture plst
   GL.display FullScreen GL.white pic
 
--- | Run a finite-time-step simulation in a window. You decide how the model is represented,
---      how to convert the model to a picture, and how to advance the model for each unit of time.
---      This function does the rest.
---
---   Once the window is open you can use the same commands as with `display`.
---
--- simulate
---         :: Display      -- ^ Display mode.
---         -> Color        -- ^ Background color.
---         -> Int          -- ^ Number of simulation steps to take for each second of real time.
---         -> model        -- ^ The initial model.
---         -> (model -> Picture)
---                 -- ^ A function to convert the model to a picture.
---         -> (ViewPort -> Float -> model -> model)
---                 -- ^ A function to step the model one iteration. It is passed the
---                 --     current viewport and the amount of time for this simulation
---                 --     step (in seconds).
---         -> IO ()
